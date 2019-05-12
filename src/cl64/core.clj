@@ -2,6 +2,7 @@
   (:gen-class))
 
 (require '[clojure.test :refer :all])
+(require '[clojure.string :as str])
 
 (def stack-base 0x0100)
 (def nmi-address 0xfffa)
@@ -22,7 +23,7 @@
 (def implied-mode-ops #{0x4a 0x0a 0x2a 0x6a 0x00 0x18 0xd8 0x58 0xb8 0xca 0x88 0xe8 0xc8 0xea 0x48 0x08 0x68 0x28 0x40 0x60 0x38 0xf8 0x78 0xaa 0xa8 0xba 0x8a 0x9a 0x98})
 (def relative-mode-ops #{0x90 0xb0 0xf0 0x30 0xd0 0x10 0x50 0x70})
 
-(defn make-comp [] 
+(defn make-computer [] 
     {:a 0 :x 0 :y 0 :sp 0xff :p 0x24 :pc 0     ; registers
     	:mem (vec (replicate memory-size 0))      ; memory 
      :address nil                              ; computed address lines
@@ -198,14 +199,16 @@
   (println (take-last 8 (concat (repeat 8 \0) (Integer/toBinaryString (:p c)))))
   c)
 
+
+
 (defn exec
   "fetches op and data at pc and emulates instruction"
   [c]
   (let [
-    data (fetch c)                                  ; direct data from the program counter
-    op (get-opcode (get data 0))                    ; op record given byte at PC
-    c (set-address-from-mode (radd c :pc (count data)) data)] ; computer after fetch and address lines
-    (show-computer (set-flags ((:fn op) c data) (:flags op)))))
+    data (fetch c)                                             ; 
+    op (get-opcode (get data 0))                               ; op record given byte at PC
+    c (set-address-from-mode (radd c :pc (count data)) data)]  ; computer after fetch and address lines
+    (show-computer (set-flags ((:fn op) c data) (:flags op))))); 
 
 (def halt 0xff)
 (defn run-computer
@@ -214,11 +217,86 @@
     (println "hit halt.")
     (run-computer (exec c))))
 
-(defn tcomp [] (run-computer (mload (make-comp) 0 [0xa2 0x30 0xa0 0x02 0x96 0x20 0xa5 0x22 0xFF])))
+(defn tcomp [] (run-computer (mload (make-computer) 0 [0xa2 0x30 0xa0 0x02 0x96 0x20 0xa5 0x22 0xFF])))
+
+
+(defn make-session [] {:computer (make-computer) :running true})
+
+(defn str-to-num [#^String s]
+  (binding [*read-eval* false]
+    (let [n (read-string s)]
+      (when (number? n)
+        n))))
+
+
+(defn eval-number-string
+  [string]
+  (if (= (first string) \$) 
+    (str-to-num (str "0x" (subs string 1))) 
+    (str-to-num string)))
+
+(defn handle-lb-cmd
+  [session in]
+  (println "Loading bytes into memory.")  
+  (assoc session :computer 
+    (mload (:computer session) (eval-number-string (get in 1))
+      (map eval-number-string (rest (rest in))))))
+
+(defn handle-db-cmd
+  [session in]
+  (let [addr (eval-number-string (get in 1))]
+    (println (format "dumping data at $%X" addr))
+
+    (println (mget-bytes (assoc (:computer session) :address addr) 256)))
+
+  session)
+
+(defn get-byte-string
+  [bytes]
+  (reduce (fn [rs v] (str rs (format "%02X " v))) "" bytes))
+
+(defn get-byte-output-string
+  [bytes]
+  (reduce (fn [rs v] (str rs (if (and (> v 32) (< v 128)) (char v) "."))) "" bytes))
+
+
+(defn handle-db-cmd
+  [session in]
+  (let [addr (eval-number-string (get in 1))]
+    (println (format "dumping data at %X" addr))
+    (doseq [v (range 16)]
+      (let [vaddr (+ addr (* v 16))
+            bytes (mget-bytes (assoc (:computer session) :address vaddr) 16)]
+
+        (println (format "%04X: %s| %s" vaddr (get-byte-string bytes) (get-byte-output-string bytes))))))
+  session)
+
+
+
+(def commands {
+	 "quit"  (fn [s d] (println "Goodbye.") (assoc s :running false))
+  "hello" (fn [s d] (println "Hello!")  s)
+  "lb" handle-lb-cmd
+  "db" handle-db-cmd
+
+  })
+
+(defn handle-command 
+  [session]
+  (let [in (str/split (str/lower-case (read-line)) #" ") func (get commands (get in 0))]
+    (if (not func)
+      (do (println "Unknown command.") session)
+      (func session in))))
+
+(defn start-interactive
+  []
+  (println "Starting 6502 interactive shell.")
+  (loop [session (make-session)]
+    (when (:running session)
+      (recur (handle-command session)))))
 
 (defn -main
   "I don't do a whole lot ... yet."
   [& args]
-
   (println "helloworld"))
 
