@@ -191,16 +191,19 @@
 
 (defn show-instruction [data op] (println (:name op) data))
 
-(defn show-computer
+(defn show-computer-old
   "print out current cpu state"
   [c]
-  (println (format "A: %X X: %X Y: %X PC: %X SP: %X P: %X" (:a c) (:x c) (:y c) (:pc c) (:sp c) (:p c)))
+  (println (format "A: %02X X: %02X Y: %02X PC: %04X SP: %02X P: %02X" (:a c) (:x c) (:y c) (:pc c) (:sp c) (:p c)))
   (println "(N V - B D I Z C)")
-  (println (take-last 8 (concat (repeat 8 \0) (Integer/toBinaryString (:p c)))))
-  c)
+  (println (take-last 8 (concat (repeat 8 \0) (Integer/toBinaryString (:p c))))))
 
-
-
+(defn show-computer
+  [c]
+  (format "A: $%02X X: $%02X Y: $%02X PC: $%04X SP: $%02X P: $%02X\n ________ \n|NV-BDIZC|\n|%s|\n -------- " 
+    (:a c) (:x c) (:y c) (:pc c) (:sp c) (:p c)
+    (reduce (fn [s d] (str s d)) "" (take-last 8 (concat (repeat 8 \0) (Integer/toBinaryString (:p c) ))))))
+  
 (defn exec
   "fetches op and data at pc and emulates instruction"
   [c]
@@ -208,17 +211,16 @@
     data (fetch c)                                             ; 
     op (get-opcode (get data 0))                               ; op record given byte at PC
     c (set-address-from-mode (radd c :pc (count data)) data)]  ; computer after fetch and address lines
-    (show-computer (set-flags ((:fn op) c data) (:flags op))))); 
+    (set-flags ((:fn op) c data) (:flags op))))
 
-(def halt 0xff)
+(def halt 0x00)
 (defn run-computer
   [c]
   (if (= halt (mpeek c (rget c :pc)))
-    (println "hit halt.")
-    (run-computer (exec c))))
+    c
+    (recur (run-computer (exec c)))))
 
 (defn tcomp [] (run-computer (mload (make-computer) 0 [0xa2 0x30 0xa0 0x02 0x96 0x20 0xa5 0x22 0xFF])))
-
 
 (defn make-session [] {:computer (make-computer) :running true})
 
@@ -228,7 +230,6 @@
       (when (number? n)
         n))))
 
-
 (defn eval-number-string
   [string]
   (if (= (first string) \$) 
@@ -237,56 +238,58 @@
 
 (defn handle-lb-cmd
   [session in]
-  (println "Loading bytes into memory.")  
+  ["Loading bytes into memory."
   (assoc session :computer 
     (mload (:computer session) (eval-number-string (get in 1))
-      (map eval-number-string (rest (rest in))))))
+      (map eval-number-string (rest (rest in)))))])
 
-(defn handle-db-cmd
-  [session in]
-  (let [addr (eval-number-string (get in 1))]
-    (println (format "dumping data at $%X" addr))
-
-    (println (mget-bytes (assoc (:computer session) :address addr) 256)))
-
-  session)
-
-(defn get-byte-string
-  [bytes]
+(defn get-byte-string 
+  [bytes] 
   (reduce (fn [rs v] (str rs (format "%02X " v))) "" bytes))
 
 (defn get-byte-output-string
   [bytes]
   (reduce (fn [rs v] (str rs (if (and (> v 32) (< v 128)) (char v) "."))) "" bytes))
 
+(defn peek-mem 
+  "mget/mput works with compter addressing lines/addressing modes. peek is an abstraction ontop of these."
+  [c a]
+  (mget (assoc c :address a)))
 
-(defn handle-db-cmd
-  [session in]
-  (let [addr (eval-number-string (get in 1))]
-    (println (format "dumping data at %X" addr))
-    (doseq [v (range 16)]
-      (let [vaddr (+ addr (* v 16))
-            bytes (mget-bytes (assoc (:computer session) :address vaddr) 16)]
+(defn peek-mem-bytes [c a len] (mget-bytes (assoc c :address a) len))
 
-        (println (format "%04X: %s| %s" vaddr (get-byte-string bytes) (get-byte-output-string bytes))))))
-  session)
-
-
+(defn dump-page
+  "returns a string based on the bytes of memory at the given address"
+  [c address]
+  (reduce (fn [rs a]
+    (let [ra (+ address (* a 16)) bytes (peek-mem-bytes c ra 16)]
+      (str rs (format "%04X: %s| %s\n" ra (get-byte-string bytes) (get-byte-output-string bytes))))) "" (range 16)))
 
 (def commands {
-	 "quit"  (fn [s d] (println "Goodbye.") (assoc s :running false))
-  "hello" (fn [s d] (println "Hello!")  s)
-  "lb" handle-lb-cmd
-  "db" handle-db-cmd
-
-  })
+	 "quit"  {:fn (fn [s d]  ["Goodbye." (assoc s :running false)]) :help "Quits interactive shell."}
+  "lb" {:fn handle-lb-cmd 
+  	     :help "Load Bytes.\nUsage: lb <addr> <bytes>\nLoad <bytes> into memory at <addr>."}
+  "db" {:fn (fn [s d] [(dump-page (:computer s) (eval-number-string (get d 1))) s]) 
+  	     :help "Dump Bytes.\nUsage: db <addr>\n Dumps a page of memory starting at <addr>."}
+  "show" {:fn (fn [s d] [(show-computer (:computer s)) s])
+  	     :help "Show computer state."}
+  "help" {:fn (fn [s d] [(reduce (fn [rs h] (format "%s\n[%s]\n%s\n\n" rs (key h) (get (get commands (key h)) :help))) "" commands) s])
+        :help "Show this message."}
+  "step" {:fn (fn [s d] (let [c (exec (:computer s))] [(show-computer c) (assoc s :computer c)]))
+  	     :help "Execute instruction at current pc register."}
+  "run" {:fn (fn [s d] ["Running to halt." (assoc s :computer (run-computer (:computer s)))])
+        :help "Run until halt."}
+  	     })
 
 (defn handle-command 
   [session]
+  (println "Ready.")
   (let [in (str/split (str/lower-case (read-line)) #" ") func (get commands (get in 0))]
     (if (not func)
       (do (println "Unknown command.") session)
-      (func session in))))
+      (let [results ((get func :fn) session in)]
+        (println (get results 0))
+        (get results 1)))))
 
 (defn start-interactive
   []
@@ -298,5 +301,5 @@
 (defn -main
   "I don't do a whole lot ... yet."
   [& args]
-  (println "helloworld"))
+  (start-interactive))
 
