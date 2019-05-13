@@ -2,6 +2,8 @@
   (:require [cl64.computer :refer :all]
   										[cl64.memory :refer :all]))
 
+
+(require '[clojure.set :refer :all])
 ;
 ; register operations
 ;
@@ -27,7 +29,7 @@
 ;
 (def flags {:c 0x01 :z 0x02 :i 0x04 :d 0x08 :b 0x10 :u 0x20 :v 0x40 :n 0x80})
 (defn flag [f] (get flags f))
-(defn flag-set? [c f] (> (bit-and (:p c) (flags f)) 0))
+(defn flag-set? [c f] (> (bit-and (:p c) (flag f)) 0))
 (defn flag-clear? [c f] (not (flag-set? c f)))
 (defn fset [c f]  (rput c :p (bit-or (flag f) (rget c :p))))
 (defn fclear [c f] (rput c :p (bit-and (bit-not (flag f)) (rget c :p)))) 
@@ -46,13 +48,13 @@
 
 (defn set-address 
   "Set the address lines in the cpu"
-  [c address] 
+  [c address]
   (assoc c :address address))
 
 (defn get-relative 
   "Based on the negative flag, return v as -127 to 128 offset."
   [v] 
-  (if (> (bit-and v :n) 0) (* (+ (bit-not v) 1) -1) v))
+  (if (> (bit-and v (flag :n)) 0) (* (+ (bit-and (bit-not v) 0xff) 1) -1) v))
 
 (defn set-address-from-mode
   "determines an address by determining the address mode of a given instruction"
@@ -115,14 +117,14 @@
    {:name "ORA" :ops #{0x09 0x05 0x15 0x0d 0x1d 0x19 0x01 0x11} :flags [:z :n] :fn (fn [c d] (rput c :a (bit-or (rget c :a) (mget c d))))}
    {:name "EOR" :ops #{0x49 0x45 0x55 0x4d 0x5d 0x59 0x41 0x51} :flags [:z :n] :fn (fn [c d] (rput c :a (bit-xor (rget c :a) (mget c d))))}
    {:name "BIT" :ops #{0x24 0x2c} :flags [:z] :fn bittest}
-   {:name "BCC" :ops #{0x90} :fn (fn [c d] (if (flag-clear? :c) (radd c :pc (get-relative (mget c d))) c))}
-   {:name "BCS" :ops #{0xb0} :fn (fn [c d] (if (flag-set? :c) (radd c :pc (get-relative (mget c d))) c))}
-   {:name "BEQ" :ops #{0xf0} :fn (fn [c d] (if (flag-set? :z) (radd c :pc (get-relative (mget c d))) c))}
-   {:name "BNE" :ops #{0xd0} :fn (fn [c d] (if (flag-clear? :z) (radd c :pc (get-relative (mget c d))) c))}
-   {:name "BMI" :ops #{0x30} :fn (fn [c d] (if (flag-set? :n) (radd c :pc (get-relative (mget c d))) c))}
-   {:name "BPL" :ops #{0x10} :fn (fn [c d] (if (flag-clear? :n) (radd c :pc (get-relative (mget c d))) c))}
-   {:name "BVC" :ops #{0x90} :fn (fn [c d] (if (flag-clear? :v) (radd c :pc (get-relative (mget c d))) c))}
-   {:name "BVS" :ops #{0xb0} :fn (fn [c d] (if (flag-set? :v) (radd c :pc (get-relative (mget c d))) c))}
+   {:name "BCC" :ops #{0x90} :fn (fn [c d] (if (flag-clear? c :c) (radd c :pc (get-relative (mget c d))) c))}
+   {:name "BCS" :ops #{0xb0} :fn (fn [c d] (if (flag-set? c :c) (radd c :pc (get-relative (mget c d))) c))}
+   {:name "BEQ" :ops #{0xf0} :fn (fn [c d] (if (flag-set? c :z) (radd c :pc (get-relative (mget c d))) c))}
+   {:name "BNE" :ops #{0xd0} :fn (fn [c d] (if (flag-clear? c :z) (radd c :pc (get-relative (mget c d))) c))}
+   {:name "BMI" :ops #{0x30} :fn (fn [c d] (if (flag-set? c :n) (radd c :pc (get-relative (mget c d))) c))}
+   {:name "BPL" :ops #{0x10} :fn (fn [c d] (if (flag-clear? c :n) (radd c :pc (get-relative (mget c d))) c))}
+   {:name "BVC" :ops #{0x90} :fn (fn [c d] (if (flag-clear? c :v) (radd c :pc (get-relative (mget c d))) c))}
+   {:name "BVS" :ops #{0xb0} :fn (fn [c d] (if (flag-set? c :v) (radd c :pc (get-relative (mget c d))) c))}
    {:name "ASL" :ops #{0x0a} :flags [:z :n] :fn (fn [c d] (let [v (rget c :a)] (carry-if-bit (rput c :a (bit-shift-left v 1)) v 0x80)))}
    {:name "ASL" :ops #{0x06 0x16 0x0e 0x1e} :flags [:z :n] :fn (fn [c d] (let [v (mget c d)] (carry-if-bit (mput c (bit-shift-left v 1)) 0x80 v)))}
    {:name "LSR" :ops #{0x4a} :flags [:z :n] :fn (fn [c d] (let [v (rget c :a)] (carry-if-bit (rput c :a (bit-shift-right v 1)) v 0x01)))}
@@ -134,13 +136,13 @@
    {:name "NOP" :ops #{0xea} :fn (fn [c d] c)}
    {:name "CMP" :ops #{0xc9 0xc5 0xd5 0xcd 0xdd 0xd9 0xc1 0xd1} :flags [:z :n] :fn (fn [c d] (let [comp (- (rget c :a) (mget c d))] (assoc (if (> comp 0) (fset c :c) c) :value comp)))}
    {:name "CPX" :ops #{0xe0 0xe4 0xec} :flags [:z :n] :fn (fn [c d] (let [comp (- (rget c :x) (mget c d))] (assoc (if (> comp 0) (fset c :c) c) :value comp)))}
-   {:name "CPY" :ops #{0xe0 0xe4 0xec} :flags [:z :n] :fn (fn [c d] (let [comp (- (rget c :y) (mget c d))] (assoc (if (> comp 0) (fset c :c) c) :value comp)))}
+   {:name "CPY" :ops #{0xc0 0xc4 0xcc} :flags [:z :n] :fn (fn [c d] (let [comp (- (rget c :y) (mget c d))] (assoc (if (> comp 0) (fset c :c) c) :value comp)))}
    {:name "JSR" :ops #{0x20} :fn (fn [c d] (push-word (- (rget c :pc) 1)))} 
    {:name "RTS" :ops #{0x60} :fn (fn [c d] (let [c (pull-word c :pc)] (radd c :pc 1)))}])
      
 (defn get-opcode [opcode]  (reduce (fn [rop op] (if (contains? (:ops op) opcode) op rop)) nil opcodes))
 
-(def three-byte-reads (conj absolute-mode-ops absolutex-mode-ops absolutey-mode-ops indirect-mode-ops))
+(def three-byte-reads (union absolute-mode-ops absolutex-mode-ops absolutey-mode-ops indirect-mode-ops))
 
 (defn fetch 
   "gets opcode and any data at the pc"
@@ -151,6 +153,10 @@
       (contains? three-byte-reads opcode) (mget-bytes c 3)
       :else (mget-bytes c 2))))
 
+(defn show-op
+  [c]
+  (let [data (fetch c)]
+    (format "%s %s" (get (get-opcode (get data 0)) :name) (str data))))
 
 (defn exec
   "fetches op and data at pc and emulates instruction"

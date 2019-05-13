@@ -15,6 +15,11 @@
       (when (number? n)
         n))))
 
+
+(defn eval-number-string-force-hex
+  [string]
+  (str-to-num (str "0x" string)))
+
 (defn eval-number-string
   [string]
   (if (= (first string) \$) 
@@ -28,8 +33,38 @@
     (mload (:computer session) (eval-number-string (get in 1))
       (map eval-number-string (rest (rest in)))))])
 
+
+
+(defn load-hex-line
+  [c line]
+  ;
+  ; TODO: Need to check checksum and validate file. Super simple right now.
+  ;
+  (let [header (subs line 0 9) 
+        body (subs line 9)
+        len (eval-number-string-force-hex (subs header 1 3))
+        address (eval-number-string-force-hex (subs header 3 7))
+        bytes (into [] (map (fn [v] (eval-number-string-force-hex (subs body (* v 2) (+ (* v 2) 2)))) (range len)))]
+    (reduce (fn [rc i] (mpoke rc (+ address i) (get bytes i))) c (range len))))
+
+(defn handle-lhex-cmd
+  [session in]
+  (let [data (str/split-lines (slurp (get in 1)))]
+    [(format "Found %d lines of data in %s." (count data) (get in 1))
+     (assoc session :computer (reduce load-hex-line (:computer session) data))]))   
+
+
+(def reg-map {"pc" :pc "a" :a "x" :x "y" :y "p" :p "sp" :sp})
+(defn handle-sreg-cmd
+  [session in]
+  ["Setting register."
+   (assoc session :computer (rput (:computer session) (get reg-map (get in 1)) (eval-number-string (get in 2))))])
+
+
+
 (def commands {
-	 "quit"  {:fn (fn [s d]  ["Goodbye." (assoc s :running false)]) :help "Quits interactive shell."}
+	 "quit"  {:fn (fn [s d]  ["Goodbye." (assoc s :running false)]) 
+	       :help "Quits interactive shell."}
   "lb" {:fn handle-lb-cmd 
   	     :help "Load Bytes.\nUsage: lb <addr> <bytes>\nLoad <bytes> into memory at <addr>."}
   "db" {:fn (fn [s d] [(dump-page (:computer s) (eval-number-string (get d 1))) s]) 
@@ -38,10 +73,17 @@
   	     :help "Show computer state."}
   "help" {:fn (fn [s d] [(reduce (fn [rs h] (format "%s\n[%s]\n%s" rs (key h) (get (get commands (key h)) :help))) "" commands) s])
         :help "Show this message."}
-  "step" {:fn (fn [s d] (let [c (exec (:computer s))] [(show-computer c) (assoc s :computer c)]))
+  "step" {:fn (fn [s d] (let [c (exec (:computer s))] [
+  	         (format "after %s \n%s" (show-op (:computer s)) (show-computer c))
+  	         (assoc s :computer c)]))
   	     :help "Execute instruction at current pc register."}
+  "lhex" {:fn handle-lhex-cmd 
+  	     :help "Load Hex File.\nUsage: lhex <path>\nLoads the file into memory."}
   "run" {:fn (fn [s d] ["Running to halt." (assoc s :computer (run-cpu (:computer s)))])
         :help "Run until halt."}
+
+  "sreg" {:fn handle-sreg-cmd
+         :help "Set register.\nUsage: sreg <reg> <value>"}
   	     })
 
 (defn handle-command 

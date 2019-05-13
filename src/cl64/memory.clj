@@ -19,6 +19,7 @@
 (defn mpeek [c address] (get (:mem c) address))
 (defn mpeek-bytes [c address len] (mget-bytes (assoc c :address address) len))
 (defn mput [c val]   (assoc (assoc-in c [:mem (:address c)] (byteify val)) :value (byteify val)))
+(defn mpoke [c address val] (mput (assoc c :address address) val))
 
 (defn mload
   "replaces a sequence of bytes starting at address in memory"
