@@ -1,4 +1,5 @@
-(ns cl64.computer)
+(ns cl64.computer
+  (:require [clojure.java.io :as io]))
 
 ;
 ; 6502/C64 constant values
@@ -26,8 +27,64 @@
 (defn make-computer [] 
     {:a 0 :x 0 :y 0 :sp 0xff :p 0x24 :pc 0     ; registers
     	:mem (vec (replicate memory-size 0))      ; memory 
+    	:mem-maps {}																														; memory maps
      :address nil                              ; computed address lines
+     :value nil 																															; last read value
      })
+
+
+
+(defn file-exists? [path] (and (not (.isDirectory (io/file path))) (.exists (io/file path))))
+
+
+;
+; from stack overflow.
+; https://stackoverflow.com/questions/23018870/how-to-read-a-whole-binary-file-nippy-into-byte-array-in-clojure
+;
+
+(defn file-to-byte-array
+  [^java.io.File file]
+  (let [result (byte-array (.length file))]
+    (with-open [in (java.io.DataInputStream. (clojure.java.io/input-stream file))]
+      (.readFully in result))
+    result))
+
+(defn slurp-bytes
+  [path]
+  (if (file-exists? path) 
+    (into [] (map (fn [v] (byteify v)) (file-to-byte-array (io/file path))))
+    []))
+
+
+(defn peek-rom [c mmap address] 
+  (get (:data mmap) (- address (:from mmap))))
+
+(defn poke-rom [c mmap address val] 
+  (println (format "Warning! poke attempted in rom at $%04X" address)) c)
+
+(defn make-memory-map
+  [c name {:keys [from to peekfn pokefn active data]}]
+  (assoc-in c [:mem-maps name] {:from from :to to :peekfn peekfn :pokefn pokefn :active active :data data}))
+
+
+(def basic-start 0xa000)
+(def kernal-start 0xe000)
+(def c64-roms
+  [{:name "basic" :path "bin/basic.bin" :start basic-start}
+   {:name "kernal" :path "bin/kernal.bin" :start kernal-start}])
+
+(defn load-c64-roms
+  [c]
+  (reduce (fn [fc rom] (let [data (slurp-bytes (:path rom))]
+    (make-memory-map fc (:name rom) 
+      {:from (:start rom) :to (+ (count data) (:start rom)) 
+      	:peekfn peek-rom :pokefn poke-rom :active true :data data}))) c c64-roms))
+
+(defn make-c64 []
+  (load-c64-roms (make-computer)))
+  
+
+
 
 
 

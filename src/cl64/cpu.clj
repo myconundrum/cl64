@@ -34,19 +34,14 @@
 
 (defn mget-bytes [c len] (if (> len 1) (subvec (:mem c) (:address c) (+ (:address c) len)) [(mget c)]))
 (defn mget-word [c]  (mem-peek-word c (:address c)))
-;(defn mpeek [c address] (get (:mem c) address))
-;(defn mpeek-bytes [c address len] (mget-bytes (assoc c :address address) len))
 (defn mput [c val]   (assoc (mem-poke c (:address c) val) :value (byteify val)))
-;(defn mpoke [c address val] (mput (assoc c :address address) val))
+
 
 (defn mload
-  "replaces a sequence of bytes starting at address in memory"
   [c address bytes]
-  (let [rest-address (+ address (count bytes)) memory-length (count (:mem c))]
-    (if (<= (+ address (count bytes)) memory-length)
-      (assoc c :mem (into [] (concat (subvec (:mem c) 0 address) bytes 
-        (if (< rest-address memory-length) (subvec (:mem c) rest-address memory-length) []))))
-      c)))
+  (println address bytes)
+  (reduce (fn [rc i] (mem-poke rc (+ address i) (get bytes i))) c (range (count bytes))))
+
 ;
 ; register operations
 ;

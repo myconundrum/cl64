@@ -3,12 +3,12 @@
   (:require [cl64.memory :refer :all]
  											[cl64.computer :refer :all]
  											[cl64.cpu :refer :all]
- 											[clojure.java.io :as io]))
+ 											))
 
 (require '[clojure.test :refer :all])
 (require '[clojure.string :as str])
 
-(defn make-session [] {:computer (make-computer) :running true})
+(defn make-session [] {:computer (make-c64) :running true})
 
 (defn str-to-num [#^String s]
   (binding [*read-eval* false]
@@ -37,7 +37,7 @@
   ["Loading bytes into memory."
   (assoc session :computer 
     (mload (:computer session) (eval-number-string (get in 1 "0"))
-      (map eval-number-string (rest (rest in)))))])
+      (into [] (map eval-number-string (rest (rest in))))))])
 
 (defn load-hex-line
   [c line]
@@ -58,7 +58,6 @@
     (let [ra (+ address (* a 16)) bytes (mem-peek-bytes c ra 16)]
       (str rs (format "%04X: %s| %s\n" ra (get-byte-string bytes) (get-byte-output-string bytes))))) "" (range 16)))
 
-(defn file-exists? [path] (and (not (.isDirectory (io/file path))) (.exists (io/file path))))
 (defn handle-load-cmd
   [session in]
   (let [base (get in 1 "")
