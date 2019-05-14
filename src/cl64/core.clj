@@ -49,8 +49,14 @@
         len (eval-number-string-force-hex (subs header 1 3))
         address (eval-number-string-force-hex (subs header 3 7))
         bytes (into [] (map (fn [v] (eval-number-string-force-hex (subs body (* v 2) (+ (* v 2) 2)))) (range len)))]
-    (reduce (fn [rc i] (mpoke rc (+ address i) (get bytes i))) c (range len))))
+    (reduce (fn [rc i] (mem-poke rc (+ address i) (get bytes i))) c (range len))))
 
+(defn dump-page
+  "returns a string based on the bytes of memory at the given address"
+  [c address]
+  (reduce (fn [rs a]
+    (let [ra (+ address (* a 16)) bytes (mem-peek-bytes c ra 16)]
+      (str rs (format "%04X: %s| %s\n" ra (get-byte-string bytes) (get-byte-output-string bytes))))) "" (range 16)))
 
 (defn file-exists? [path] (and (not (.isDirectory (io/file path))) (.exists (io/file path))))
 (defn handle-load-cmd
