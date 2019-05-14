@@ -2,7 +2,6 @@
   (:require [cl64.computer :refer :all]
   										[cl64.memory :refer :all]))
 
-
 (require '[clojure.set :refer :all])
 ;
 ; register operations
@@ -10,7 +9,6 @@
 (defn rget [c register] (get c register))
 (defn rput [c register val] (assoc c register val :value val))
 (defn radd [c register val] (assoc c register (+ (rget c register) val)))
-
 ;
 ; manage the stack
 ;
@@ -22,8 +20,6 @@
 (defn pull-word [c reg] 
   (let [clo (pop c reg) chi (pop clo reg)] 
     (rput c reg (bit-or (rget clo reg) (bit-shift-left (rget chi reg) 8)))))
-
-
 ;
 ; flag management (status register :p)
 ;
@@ -54,33 +50,36 @@
 (defn get-relative 
   "Based on the negative flag, return v as -127 to 128 offset."
   [v] 
-  (if (> (bit-and v (flag :n)) 0) (* (+ (bit-and (bit-not v) 0xff) 1) -1) v))
+  (if (> (bit-and v (flag :n)) 0) (twos-complement v) v))
+
+(def address-mode-data
+  { implied-mode    {:bytes 1 :address (fn [c lo hi] nil) :str (fn [op lo hi] (format "%s" (:name op)))}
+		  immediate-mode  {:bytes 2 :address (fn [c lo hi] nil) :str (fn [op lo hi] (format "%s #$%02X" (:name op) lo))}
+		  zeropage-mode   {:bytes 2 :address (fn [c lo hi] lo) :str (fn [op lo hi] (format "%s $%02X" (:name op) lo))}
+		  relative-mode   {:bytes 2 :address (fn [c lo hi] lo) :str (fn [op lo hi] (format "%s $%02X" (:name op) lo))}
+		  zeropagex-mode  {:bytes 2 :address (fn [c lo hi] (+ (rget c :x) lo)) :str (fn [op lo hi] (format "%s $%02X,x" (:name op) lo))} 
+		  zeropagey-mode  {:bytes 2 :address (fn [c lo hi] (+ (rget c :y) lo)) :str (fn [op lo hi] (format "%s $%02X,y" (:name op) lo))}
+		  absolute-mode   {:bytes 3 :address (fn [c lo hi] (wordify lo hi)) :str (fn [op lo hi] (format "%s $%04X" (:name op) (wordify lo hi)))} 
+		  absolutex-mode  {:bytes 3 :address (fn [c lo hi] (+ (wordify lo hi) (rget c :x))) :str (fn [op lo hi] (format "%s $%04X,x" (:name op) (wordify lo hi)))} 
+		  absolutey-mode  {:bytes 3 :address (fn [c lo hi] (+ (wordify lo hi) (rget c :y))) :str (fn [op lo hi] (format "%s $%04X,y" (:name op) (wordify lo hi)))} 
+		  indirect-mode   {:bytes 3 :address (fn [c lo hi] (mget-word c (wordify lo hi))) :str (fn [op lo hi] (format "%s $%04X" (:name op) (wordify lo hi)))} 
+		  indexed-indirect-mode  {:bytes 2 :address (fn [c lo hi] (mget-word c (+ lo (rget c :x)))) :str (fn [op lo hi] (format "%s ($%02X,x)" (:name op) lo))}  
+		  indirect-indexed-mode  {:bytes 2 :address (fn [c lo hi] (+ (mget-word c lo) (rget c :y))) :str (fn [op lo hi] (format "%s ($%02X),y" (:name op) lo))} 
+  })
+
+(defn get-address-mode-data 
+   [op]
+   (reduce  (fn [rmode mode] (
+     if (contains? mode op) (get address-mode-data mode) rmode)) (get address-mode-data implied-mode) (keys address-mode-data)))
 
 (defn set-address-from-mode
   "determines an address by determining the address mode of a given instruction"
   [c data]
-  (let [opcode (get data 0) lo (get data 1) hi (get data 2)]
-    (set-address c 
-		    (cond 
-		      (contains? implied-mode-ops opcode) 		nil
-		      (contains? immediate-mode-ops opcode) nil
-		      (contains? zeropage-mode-ops opcode) lo
-		      (contains? relative-mode-ops opcode) lo
-		      (contains? zeropagex-mode-ops opcode) (+ (rget c :x) lo)
-		      (contains? zeropagey-mode-ops opcode) (+ (rget c :y) lo)
-		      (contains? absolute-mode-ops opcode) (wordify lo hi)
-		      (contains? absolutex-mode-ops opcode) (+ (wordify lo hi) (rget c :x))
-		      (contains? absolutey-mode-ops opcode) (+ (wordify lo hi) (rget c :y))
-		      (contains? indirect-mode-ops opcode) (mget-word c (wordify lo hi))
-		      (contains? indexed-indirect-mode-ops opcode) (mget-word c (+ lo (rget c :x))) 
-		      (contains? indirect-indexed-mode-ops opcode) (+ (mget-word c lo) (rget c :y))))))
-
-
+  (set-address c ((:address (get-address-mode-data (get data 0))) c (get data 1) (get data 2))))
 
 (defn bittest
   [c d]
-  (assoc (flag-if-has-flag (flag-if-has-flag c :n (mget c d)) 
-    :v (mget c d)) :value (bit-and (mget c d) (rget c :a))))
+  (assoc (flag-if-has-flag (flag-if-has-flag c :n (mget c d)) :v (mget c d)) :value (bit-and (mget c d) (rget c :a))))
 
 (def opcodes
   [{:name "LDA" :ops #{0xa9 0xa5 0xb5 0xad 0xbd 0xb9 0xa1 0xb1} :flags [:z :n] :fn (fn [c d] (rput c :a (mget c d)))}
@@ -142,34 +141,24 @@
      
 (defn get-opcode [opcode]  (reduce (fn [rop op] (if (contains? (:ops op) opcode) op rop)) nil opcodes))
 
-(def three-byte-reads (union absolute-mode-ops absolutex-mode-ops absolutey-mode-ops indirect-mode-ops))
-
 (defn fetch 
   "gets opcode and any data at the pc"
   [c]
-  (let [c (set-address c (rget c :pc))  opcode (mget c)]
-    (cond 
-      (contains? implied-mode-ops opcode) [opcode]
-      (contains? three-byte-reads opcode) (mget-bytes c 3)
-      :else (mget-bytes c 2))))
+  (let [c (set-address c (rget c :pc)) opcode (mget c) len (:bytes (get-address-mode-data opcode))]
+    (mget-bytes c len)))
 
-(defn show-op
+(defn disassemble
   [c]
   (let [data (fetch c)]
-    (format "%s %s" (get (get-opcode (get data 0)) :name) (str data))))
+    ((:str (get-address-mode-data (get data 0))) (get-opcode (get data 0)) (get data 1) (get data 2))))
 
 (defn exec
   "fetches op and data at pc and emulates instruction"
   [c]
-  (let [
-    data (fetch c)                                             ; 
-    op (get-opcode (get data 0))                               ; op record given byte at PC
-    c (set-address-from-mode (radd c :pc (count data)) data)]  ; computer after fetch and address lines
+  (let [data (fetch c) op (get-opcode (get data 0)) c (set-address-from-mode (radd c :pc (count data)) data)]
     (set-flags ((:fn op) c data) (:flags op))))
 
 (def halt 0x00)
 (defn run-cpu
   [c]
-  (if (= halt (mpeek c (rget c :pc)))
-    c
-    (recur (run-cpu (exec c)))))
+  (if (= halt (mpeek c (rget c :pc))) c (recur (run-cpu (exec c)))))
