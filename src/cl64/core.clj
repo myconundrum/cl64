@@ -86,12 +86,12 @@
   	     :help "Load Bytes.\nUsage: lb <addr> <bytes>\nLoad <bytes> into memory at <addr>."}
   "db" {:fn (fn [s d] [(dump-page (:computer s) (eval-number-string (get d 1 "0"))) s]) 
   	     :help "Dump Bytes.\nUsage: db <addr>\n Dumps a page of memory starting at <addr>."}
-  "show" {:fn (fn [s d] [(show-computer (:computer s)) s])
+  "show" {:fn (fn [s d] [(show-cpu (:computer s)) s])
   	     :help "Show computer state."}
   "help" {:fn (fn [s d] [(reduce (fn [rs h] (format "%s\n[%s]\n%s" rs (key h) (get (get commands (key h)) :help))) "" commands) s])
         :help "Show this message."}
   "step" {:fn (fn [s d] (let [c (exec (:computer s))] [
-  	         (format "after %s \n%s" (disassemble (:computer s)) (show-computer c))
+  	         (format "after %s \n%s" (disassemble (:computer s)) (show-cpu c))
   	         (assoc s :computer c)]))
   	     :help "Execute instruction at current pc register."}
   "load" {:fn handle-load-cmd 
@@ -101,6 +101,11 @@
 
   "set" {:fn handle-set-cmd
          :help "Set register.\nUsage: set <reg> <value>"}
+
+  "peek" {:fn (fn [s d] [(format "$%02x" (mem-peek (:computer s) (eval-number-string (get d 1 "0")))) s])
+          :help "Peek memory location.\n Usage: peek <address>."}
+  "peekword"  {:fn (fn [s d] [(format "$%04x" (mem-peek-word (:computer s) (eval-number-string (get d 1 "0")))) s])
+          :help "Peek word at memory location.\n Usage: peekword <address>."}
   	     })
 
 (defn handle-command 
@@ -115,7 +120,6 @@
 
 (defn start-interactive
   []
-  (println "Starting 6502 interactive shell.")
   (loop [session (make-session)]
     (when (:running session)
       (recur (handle-command session)))))

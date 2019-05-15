@@ -32,8 +32,11 @@
         (contains? relative-mode opcode) lo
         :else (mget c))))) 
 
-(defn mget-bytes [c len] (if (> len 1) (subvec (:mem c) (:address c) (+ (:address c) len)) [(mget c)]))
-(defn mget-word [c]  (mem-peek-word c (:address c)))
+(defn mget-bytes [c len] 
+  (into [] (map (fn [x] (mem-peek c (+ (:address c) x))) (range len))))
+
+(defn mget-word [c] (mem-peek-word c (:address c)))
+
 (defn mput [c val]   (assoc (mem-poke c (:address c) val) :value (byteify val)))
 
 
@@ -55,9 +58,9 @@
 (defn pull [c reg] 
   (let [c (radd c :sp 1)]
     (rput c reg (get (:mem c) (+ stack-base (rget c :sp))))))
-(defn push-word [c val] (push (push c (byteify (bit-shift-right val 8))) (byteify (val))))
+(defn push-word [c val] (push (push c (byteify (bit-shift-right val 8))) (byteify val)))
 (defn pull-word [c reg] 
-  (let [clo (pop c reg) chi (pop clo reg)] 
+  (let [clo (pull c reg) chi (pull clo reg)] 
     (rput c reg (bit-or (rget clo reg) (bit-shift-left (rget chi reg) 8)))))
 ;
 ; flag management (status register :p)
@@ -135,7 +138,7 @@
    {:name "TSX" :ops #{0xba} :flags [:z :n] :fn (fn [c d] (rput c :x (rget c :sp)))}
    {:name "TXA" :ops #{0x8a} :flags [:z :n] :fn (fn [c d] (rput c :a (rget c :x)))}
    {:name "TYA" :ops #{0x98} :flags [:z :n] :fn (fn [c d] (rput c :a (rget c :y)))}
-   {:name "TXS" :ops #{0xaa} :flags [:z :n] :fn (fn [c d] (rput c :sp (rget c :x)))}
+   {:name "TXS" :ops #{0x9a} :flags [:z :n] :fn (fn [c d] (rput c :sp (rget c :x)))}
    {:name "JMP" :ops #{0x4c 0x6c} :fn (fn [c d] (rput c :pc (:address c)))}
    {:name "PHP" :ops #{0x08} :fn (fn [c d] (push c :p))}
    {:name "PHA" :ops #{0x48} :fn (fn [c d] (push c :a))}
@@ -178,7 +181,7 @@
    {:name "CMP" :ops #{0xc9 0xc5 0xd5 0xcd 0xdd 0xd9 0xc1 0xd1} :flags [:z :n] :fn (fn [c d] (let [comp (- (rget c :a) (mget c d))] (assoc (if (> comp 0) (fset c :c) c) :value comp)))}
    {:name "CPX" :ops #{0xe0 0xe4 0xec} :flags [:z :n] :fn (fn [c d] (let [comp (- (rget c :x) (mget c d))] (assoc (if (> comp 0) (fset c :c) c) :value comp)))}
    {:name "CPY" :ops #{0xc0 0xc4 0xcc} :flags [:z :n] :fn (fn [c d] (let [comp (- (rget c :y) (mget c d))] (assoc (if (> comp 0) (fset c :c) c) :value comp)))}
-   {:name "JSR" :ops #{0x20} :fn (fn [c d] (push-word (- (rget c :pc) 1)))} 
+   {:name "JSR" :ops #{0x20} :fn (fn [c d] (rput (push-word c (- (rget c :pc) 1)) :pc (:address c)))}
    {:name "RTS" :ops #{0x60} :fn (fn [c d] (let [c (pull-word c :pc)] (radd c :pc 1)))}])
      
 (defn get-opcode [opcode]  (reduce (fn [rop op] (if (contains? (:ops op) opcode) op rop)) nil opcodes))
@@ -189,10 +192,27 @@
   (let [c (set-address c (rget c :pc)) opcode (mget c) len (:bytes (get-address-mode-data opcode))]
     (mget-bytes c len)))
 
+
+
+
 (defn disassemble
   [c]
   (let [data (fetch c)]
     ((:str (get-address-mode-data (get data 0))) (get-opcode (get data 0)) (get data 1) (get data 2))))
+
+(defn disassemble-at
+  [c address]
+  (disassemble (rput c :pc address)))
+
+
+(defn show-cpu
+  [c]
+  (format "A: $%02X X: $%02X Y: $%02X PC: $%04X SP: $%02X P: $%02X\n ________ \n|NV-BDIZC|\n|%s|\n --------\n%s" 
+    (:a c) (:x c) (:y c) (:pc c) (:sp c) (:p c)
+    (reduce (fn [s d] (str s d)) "" (take-last 8 (concat (repeat 8 \0) (Integer/toBinaryString (:p c) ))))
+    (format "$%04X: %s\n" (rget c :pc) (disassemble c))))
+
+
 
 (defn exec
   "fetches op and data at pc and emulates instruction"

@@ -20,6 +20,7 @@
 
 (def basic-rom-start 0xa000)
 (def kernal-rom-start 0xe000)
+(def char-rom-start 0xd000)
 ;
 ; manage standard rom pokes/peeks when mapped in.
 ;
@@ -28,7 +29,8 @@
 
 (def c64-roms
   [{:name "basic" :path "bin/basic.bin" :start basic-rom-start}
-   {:name "kernal" :path "bin/kernal.bin" :start kernal-rom-start}])
+   {:name "kernal" :path "bin/kernal.bin" :start kernal-rom-start}
+   {:name "char" :path "bin/char.bin" :start char-rom-start}])
 
 ;
 ; the bankswitch address (0x01 in zeropage memory) determines which roms are mapped into memory and other 
@@ -37,10 +39,9 @@
   [c]
   (let [val (bit-and (mem-unmapped-peek c bankswitch-address) 0x7)
     active [{:name "basic"  :active (= (bit-and val 0x3) 0x3)}
-            {:name "kernal" :active (> (bit-and val 0x2) 0)}]]
-            ;"charrom" (and (> val 0) (= (bit-and 0x4) 0))
+            {:name "kernal" :active (> (bit-and val 0x2) 0)}
+            {:name "char" :active (and (> val 0) (= (bit-and val 0x4) 0))}]]
             ;"io" (and (> val 0) (> (bit-and 0x4) 0))
-    (println val)
     (reduce (fn [rc am] (set-memory-map-active rc (:name am) (:active am))) c active)))
 
 (defn processor-port-poke
@@ -61,14 +62,15 @@
 (defn load-c64-roms
   [c]
   (reduce (fn [fc rom] (let [data (slurp-bytes (:path rom))]
+    (println (format "loading rom from path %s (size: $%04X start address: $%04X)." 
+      (:path rom) (count data) (:start rom)))
     (add-memory-map fc 
       {:name (:name rom) :from (:start rom) :to (+ (count data) (:start rom)) 
       	:peekfn peek-rom :pokefn poke-rom :active false :data data}))) c c64-roms))
 
 (defn make-c64 []
-  (set-bankswitch(      ; set bankswitch monitor and default value
-    load-c64-roms (     ; load roms
-      make-computer)))) ; initialize basic computer
-  
+  (println "Initializing Commodore 64 emulator.")
+  (let [c (-> (make-computer) (load-c64-roms) (set-bankswitch))]
+    (rput c :pc (mem-peek-word c reset-address))))
 
 
