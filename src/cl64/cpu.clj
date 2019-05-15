@@ -41,16 +41,12 @@
 ;
 ; These opcodes require an extra cycle on crossing a page boundary
 ;
-(def page-boundary-checks
-  #{0x7d 0x79 0x71 0x3d 0x39 0x31 0x90 0xb0 0xf0 0x30 0xd0 0x10 0x50 0x70 0xdd 0xd9 0xd1
-   0x5d 0x59 0x51 0xbd 0xb9 0xb1 0xbe 0xbc 0x1d 0x19 0x11 0xfd 0xf9 0xf1 })
+(def page-boundary-opcodes
+  #{0x7d 0x79 0x71 0x3d 0x39 0x31 0xdd 0xd9 0xd1 0x5d 0x59 0x51 0xbd 0xb9 0xb1 0xbe 0xbc 0x1d 0x19 0x11 0xfd 0xf9 0xf1 })
 
 
-(defn add-cycles-by-op
-  [c d]
-  (assoc c :cycles (+ (:cycles c) (get cycle-counts (first d) 0))))
-
-(defn inc-cycles [c] (assoc :cycles) (inc (:cycles c)))
+(defn add-cycles-by-op [c d] (assoc c :cycles (+ (:cycles c) (get cycle-counts (first d) 0))))
+(defn inc-cycles [c] (assoc c :cycles (inc (:cycles c))))
 
 
 (defn mget 
@@ -80,8 +76,14 @@
 ; register operations
 ;
 (defn rget [c register] (get c register))
-(defn rput [c register val] (assoc c register val :value val))
-(defn radd [c register val] (assoc c register (+ (rget c register) val)))
+
+;
+; $PC has a range of $0000 to $FFFF all other registers have a range of $00 to $FF
+;
+(defn rput [c register val] 
+  (let [val (if (not (= register :pc)) (byteify val) (bit-and val 0xffff))]
+    (assoc c register val :value val)))
+(defn radd [c register val] (rput c register (+ (rget c register) val)))
 ;
 ; manage the stack
 ;
@@ -128,7 +130,7 @@
 (defn page-boundary-check
   "for certain instructions, add a cycle if the page boundary was crossed"
   [c a1 a2]
-  (if (!= (bit-and a1 0xff) (bit-and a2 0xff)) (inc-cycles c) c))
+  (if (not (= (bit-and a1 0xff) (bit-and a2 0xff))) (inc-cycles c) c))
 
 (defn take-branch
   [c d]
@@ -137,24 +139,35 @@
   ; update the pc with the relative offset, add 1 cycle for a successful branch
   ; and add another cycle if it crossed a page boundary.
   ;
-  (page-boundary-check (inc-cycles (rput c :pc a2)) a1 a2)
+  (page-boundary-check (inc-cycles (rput c :pc a2)) a1 a2)))
+
+
+(defn absolute-indexed-mode-address
+ [c op lo hi reg]
+ (let [a1 (wordify lo hi) a2 (+ a1 (rget c reg))]
+   [a2 (if (contains? page-boundary-opcodes op) (page-boundary-check c a1 a2) false)]))
+
+(defn indirect-indexed-mode-address
+  [c op lo hi]
+  (let [a1 (mget-word c lo) a2 (+ a1 (rget c :y))]
+    [a2 (if (contains? page-boundary-opcodes op) (page-boundary-check c a1 a2) false)]))
+
+
+(fn [c op lo hi] [(+ (mget-word c lo) (rget c :y)) true])
   
-
-
-
 (def address-mode-data
-  { implied-mode    {:bytes 1 :address (fn [c lo hi] nil) :str (fn [op lo hi] (format "%s" (:name op)))}
-		  immediate-mode  {:bytes 2 :address (fn [c lo hi] nil) :str (fn [op lo hi] (format "%s #$%02X" (:name op) lo))}
-		  zeropage-mode   {:bytes 2 :address (fn [c lo hi] lo) :str (fn [op lo hi] (format "%s $%02X" (:name op) lo))}
-		  relative-mode   {:bytes 2 :address (fn [c lo hi] lo) :str (fn [op lo hi] (format "%s $%02X" (:name op) lo))}
-		  zeropagex-mode  {:bytes 2 :address (fn [c lo hi] (+ (rget c :x) lo)) :str (fn [op lo hi] (format "%s $%02X,x" (:name op) lo))} 
-		  zeropagey-mode  {:bytes 2 :address (fn [c lo hi] (+ (rget c :y) lo)) :str (fn [op lo hi] (format "%s $%02X,y" (:name op) lo))}
-		  absolute-mode   {:bytes 3 :address (fn [c lo hi] (wordify lo hi)) :str (fn [op lo hi] (format "%s $%04X" (:name op) (wordify lo hi)))} 
-		  absolutex-mode  {:bytes 3 :address (fn [c lo hi] (+ (wordify lo hi) (rget c :x))) :str (fn [op lo hi] (format "%s $%04X,x" (:name op) (wordify lo hi)))} 
-		  absolutey-mode  {:bytes 3 :address (fn [c lo hi] (+ (wordify lo hi) (rget c :y))) :str (fn [op lo hi] (format "%s $%04X,y" (:name op) (wordify lo hi)))} 
-		  indirect-mode   {:bytes 3 :address (fn [c lo hi] (mget-word c (wordify lo hi))) :str (fn [op lo hi] (format "%s $%04X" (:name op) (wordify lo hi)))} 
-		  indexed-indirect-mode  {:bytes 2 :address (fn [c lo hi] (mget-word c (+ lo (rget c :x)))) :str (fn [op lo hi] (format "%s ($%02X,x)" (:name op) lo))}  
-		  indirect-indexed-mode  {:bytes 2 :address (fn [c lo hi] (+ (mget-word c lo) (rget c :y))) :str (fn [op lo hi] (format "%s ($%02X),y" (:name op) lo))} 
+  { implied-mode    {:bytes 1 :address (fn [c op lo hi] [nil false]) :str (fn [op lo hi] (format "%s" (:name op)))}
+		  immediate-mode  {:bytes 2 :address (fn [c op lo hi] [nil false]) :str (fn [op lo hi] (format "%s #$%02X" (:name op) lo))}
+		  zeropage-mode   {:bytes 2 :address (fn [c op lo hi] [lo false]) :str (fn [op lo hi] (format "%s $%02X" (:name op) lo))}
+		  relative-mode   {:bytes 2 :address (fn [c op lo hi] [lo false]) :str (fn [op lo hi] (format "%s $%02X" (:name op) lo))}
+		  zeropagex-mode  {:bytes 2 :address (fn [c op lo hi] [(byteify (+ (rget c :x) lo)) false]) :str (fn [op lo hi] (format "%s $%02X,x" (:name op) lo))} 
+		  zeropagey-mode  {:bytes 2 :address (fn [c op lo hi] [(byteify (+ (rget c :y) lo)) false]) :str (fn [op lo hi] (format "%s $%02X,y" (:name op) lo))}
+		  absolute-mode   {:bytes 3 :address (fn [c op lo hi] [(wordify lo hi) false]) :str (fn [op lo hi] (format "%s $%04X" (:name op) (wordify lo hi)))} 
+		  absolutex-mode  {:bytes 3 :address (fn [c op lo hi] (absolute-indexed-mode-address c op lo hi :x)) :str (fn [op lo hi] (format "%s $%04X,x" (:name op) (wordify lo hi)))} 
+		  absolutey-mode  {:bytes 3 :address (fn [c op lo hi] (absolute-indexed-mode-address c op lo hi :y)) :str (fn [op lo hi] (format "%s $%04X,y" (:name op) (wordify lo hi)))} 
+		  indirect-mode   {:bytes 3 :address (fn [c op lo hi] [(mget-word c (wordify lo hi)) false]) :str (fn [op lo hi] (format "%s $%04X" (:name op) (wordify lo hi)))} 
+		  indexed-indirect-mode  {:bytes 2 :address (fn [c op lo hi] [(mget-word c (+ lo (rget c :x))) false]) :str (fn [op lo hi] (format "%s ($%02X,x)" (:name op) lo))}  
+		  indirect-indexed-mode  {:bytes 2 :address indirect-indexed-mode-address :str (fn [op lo hi] (format "%s ($%02X),y" (:name op) lo))} 
   })
 
 (defn get-address-mode-data 
@@ -165,7 +178,8 @@
 (defn set-address-from-mode
   "determines an address by determining the address mode of a given instruction"
   [c data]
-  (set-address c ((:address (get-address-mode-data (get data 0))) c (get data 1) (get data 2))))
+  (let [[address cycles] ((:address (get-address-mode-data (get data 0))) c (get data 0) (get data 1) (get data 2))]
+        (set-address (if cycles (inc-cycles c) c) address)))
 
 (defn bittest
   [c d]
@@ -206,14 +220,14 @@
    {:name "ORA" :ops #{0x09 0x05 0x15 0x0d 0x1d 0x19 0x01 0x11} :flags [:z :n] :fn (fn [c d] (rput c :a (bit-or (rget c :a) (mget c d))))}
    {:name "EOR" :ops #{0x49 0x45 0x55 0x4d 0x5d 0x59 0x41 0x51} :flags [:z :n] :fn (fn [c d] (rput c :a (bit-xor (rget c :a) (mget c d))))}
    {:name "BIT" :ops #{0x24 0x2c} :flags [:z] :fn bittest}
-   {:name "BCC" :ops #{0x90} :fn (fn [c d] (if (flag-clear? c :c) (radd c :pc (get-relative (mget c d))) c))}
-   {:name "BCS" :ops #{0xb0} :fn (fn [c d] (if (flag-set? c :c) (radd c :pc (get-relative (mget c d))) c))}
-   {:name "BEQ" :ops #{0xf0} :fn (fn [c d] (if (flag-set? c :z) (radd c :pc (get-relative (mget c d))) c))}
-   {:name "BNE" :ops #{0xd0} :fn (fn [c d] (if (flag-clear? c :z) (radd c :pc (get-relative (mget c d))) c))}
-   {:name "BMI" :ops #{0x30} :fn (fn [c d] (if (flag-set? c :n) (radd c :pc (get-relative (mget c d))) c))}
-   {:name "BPL" :ops #{0x10} :fn (fn [c d] (if (flag-clear? c :n) (radd c :pc (get-relative (mget c d))) c))}
-   {:name "BVC" :ops #{0x90} :fn (fn [c d] (if (flag-clear? c :v) (radd c :pc (get-relative (mget c d))) c))}
-   {:name "BVS" :ops #{0xb0} :fn (fn [c d] (if (flag-set? c :v) (radd c :pc (get-relative (mget c d))) c))}
+   {:name "BCC" :ops #{0x90} :fn (fn [c d] (if (flag-clear? c :c) (take-branch c d) c))}
+   {:name "BCS" :ops #{0xb0} :fn (fn [c d] (if (flag-set? c :c) (take-branch c d) c))}
+   {:name "BEQ" :ops #{0xf0} :fn (fn [c d] (if (flag-set? c :z) (take-branch c d) c))}
+   {:name "BNE" :ops #{0xd0} :fn (fn [c d] (if (flag-clear? c :z) (take-branch c d) c))}
+   {:name "BMI" :ops #{0x30} :fn (fn [c d] (if (flag-set? c :n) (take-branch c d) c))}
+   {:name "BPL" :ops #{0x10} :fn (fn [c d] (if (flag-clear? c :n) (take-branch c d) c))}
+   {:name "BVC" :ops #{0x90} :fn (fn [c d] (if (flag-clear? c :v) (take-branch c d) c))}
+   {:name "BVS" :ops #{0xb0} :fn (fn [c d] (if (flag-set? c :v) (take-branch c d) c))}
    {:name "ASL" :ops #{0x0a} :flags [:z :n] :fn (fn [c d] (let [v (rget c :a)] (carry-if-bit (rput c :a (bit-shift-left v 1)) v 0x80)))}
    {:name "ASL" :ops #{0x06 0x16 0x0e 0x1e} :flags [:z :n] :fn (fn [c d] (let [v (mget c d)] (carry-if-bit (mput c (bit-shift-left v 1)) 0x80 v)))}
    {:name "LSR" :ops #{0x4a} :flags [:z :n] :fn (fn [c d] (let [v (rget c :a)] (carry-if-bit (rput c :a (bit-shift-right v 1)) v 0x01)))}
@@ -258,5 +272,8 @@
   (let [data (fetch c) op (get-opcode (get data 0)) c (add-cycles-by-op (set-address-from-mode (radd c :pc (count data)) data) data)]
     (set-flags ((:fn op) c data) (:flags op))))
 
+;
+; TODO: The "stop on 0x00" is just a hack while bringing the full system online.
+;
 (def halt 0x00)
 (defn run-cpu [c] (if (= halt (mem-peek c (rget c :pc))) c (recur (run-cpu (exec c)))))

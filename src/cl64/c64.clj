@@ -25,7 +25,12 @@
 ; manage standard rom pokes/peeks when mapped in.
 ;
 (defn peek-rom [c mmap address] (get (:data mmap) (- address (:from mmap))))
-(defn poke-rom [c mmap address val] (println (format "Warning! poke attempted in rom at $%04X" address)) c)
+
+;
+; even when ROM is banked in, a poke will "write through" to the underlying memory locatio in RAM.
+; You just won't see it unless you bank out the ROM.
+;
+(defn poke-rom [c mmap address val] (mem-unmapped-poke c address val))
 
 (def c64-roms
   [{:name "basic" :path "bin/basic.bin" :start basic-rom-start}
