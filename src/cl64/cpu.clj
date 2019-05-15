@@ -45,10 +45,12 @@
   #{0x7d 0x79 0x71 0x3d 0x39 0x31 0x90 0xb0 0xf0 0x30 0xd0 0x10 0x50 0x70 0xdd 0xd9 0xd1
    0x5d 0x59 0x51 0xbd 0xb9 0xb1 0xbe 0xbc 0x1d 0x19 0x11 0xfd 0xf9 0xf1 })
 
-;
-; These opcodes require an extra cycle on a successful branch
-;
-(def branch-checks #{0x90 0xb0 0xf0 0x30 0xd0 0x10 0x50 0x70})
+
+(defn add-cycles-by-op
+  [c d]
+  (assoc c :cycles (+ (:cycles c) (get cycle-counts (first d) 0))))
+
+(defn inc-cycles [c] (assoc :cycles) (inc (:cycles c)))
 
 
 (defn mget 
@@ -122,6 +124,23 @@
   "Based on the negative flag, return v as -127 to 128 offset."
   [v] 
   (if (> (bit-and v (flag :n)) 0) (twos-complement v) v))
+
+(defn page-boundary-check
+  "for certain instructions, add a cycle if the page boundary was crossed"
+  [c a1 a2]
+  (if (!= (bit-and a1 0xff) (bit-and a2 0xff)) (inc-cycles c) c))
+
+(defn take-branch
+  [c d]
+  (let [a1 (rget c :pc) a2 (+ a1 (get-relative (mget c d)))]
+  ;
+  ; update the pc with the relative offset, add 1 cycle for a successful branch
+  ; and add another cycle if it crossed a page boundary.
+  ;
+  (page-boundary-check (inc-cycles (rput c :pc a2)) a1 a2)
+  
+
+
 
 (def address-mode-data
   { implied-mode    {:bytes 1 :address (fn [c lo hi] nil) :str (fn [op lo hi] (format "%s" (:name op)))}
@@ -227,15 +246,16 @@
 
 (defn show-cpu
   [c]
-  (format "A: $%02X X: $%02X Y: $%02X PC: $%04X SP: $%02X P: $%02X\n ________ \n|NV-BDIZC|\n|%s|\n --------\n%s" 
-    (:a c) (:x c) (:y c) (:pc c) (:sp c) (:p c)
+  (format "A: $%02X X: $%02X Y: $%02X PC: $%04X SP: $%02X P: $%02X Cycles: %d\n ________ \n|NV-BDIZC|\n|%s|\n --------\n%s" 
+    (:a c) (:x c) (:y c) (:pc c) (:sp c) (:p c) (:cycles c)
     (reduce (fn [s d] (str s d)) "" (take-last 8 (concat (repeat 8 \0) (Integer/toBinaryString (:p c) ))))
     (format "$%04X: %s\n" (rget c :pc) (disassemble c))))
+
 
 (defn exec
   "fetches op and data at pc and emulates instruction"
   [c]
-  (let [data (fetch c) op (get-opcode (get data 0)) c (set-address-from-mode (radd c :pc (count data)) data)]
+  (let [data (fetch c) op (get-opcode (get data 0)) c (add-cycles-by-op (set-address-from-mode (radd c :pc (count data)) data) data)]
     (set-flags ((:fn op) c data) (:flags op))))
 
 (def halt 0x00)

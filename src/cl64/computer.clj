@@ -25,6 +25,7 @@
     	:mem-maps []																														; memory maps
      :address nil                              ; computed address lines
      :value nil 																															; last read value
+     :cycles 0																																	; cycle count
      })
 
 
