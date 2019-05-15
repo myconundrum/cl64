@@ -201,6 +201,4 @@
     (set-flags ((:fn op) c data) (:flags op))))
 
 (def halt 0x00)
-(defn run-cpu
-  [c]
-  (if (= halt (mem-peek c (rget c :pc))) c (recur (run-cpu (exec c)))))
+(defn run-cpu [c] (if (= halt (mem-peek c (rget c :pc))) c (recur (run-cpu (exec c)))))

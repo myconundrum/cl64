@@ -4,13 +4,31 @@
 
 (defn -peek [c mmap address] (get (:mem c) address))
 (defn -poke [c mmap address val] (assoc-in c [:mem address] (byteify val)))
+
+
+(defn add-memory-map [c map] (assoc c :mem-maps (conj (:mem-maps c) map)))
+
 (def base-memory-map {:from 0 :to 0xffff :active true :peekfn -peek :pokefn -poke :data nil})
 
 (defn get-memory-map
   [c address]
-  (reduce (fn [rm k] (let [m (get (:mem-maps c) k)] (if (and (:active m) (>= address (:from m)) (< address (:to m))) m rm))) base-memory-map  
-    (keys (:mem-maps c))))
-  
+  (reduce (fn [rm m] (if (and (:active m) (>= address (:from m)) (< address (:to m))) m rm)) base-memory-map  
+    (:mem-maps c)))
+
+(defn set-memory-map-active
+  [c name state]
+  (assoc c :mem-maps
+    (into [] (map (fn [m] (if (= (:name m) name) (assoc m :active state) m)) (:mem-maps c)))))
+
+(defn mem-unmapped-peek 
+  ([c address] (-peek c base-memory-map address))
+  ([c mmap address] (-peek c base-memory-map address)))
+
+(defn mem-unmapped-poke 
+  ([c address val] (-poke c base-memory-map address val))
+  ([c mmap address val] (-peek c base-memory-map address val)))
+
+
 (defn mem-peek
   "peek into memory, with support for memory maps"
   [c address]
@@ -31,6 +49,7 @@
   (let [mmap (get-memory-map c address)]
     ((:pokefn mmap) c mmap address val)))
  
+
 
 (defn get-byte-string 
   [bytes] 

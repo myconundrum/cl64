@@ -3,6 +3,7 @@
   (:require [cl64.memory :refer :all]
  											[cl64.computer :refer :all]
  											[cl64.cpu :refer :all]
+ 											[cl64.c64 :refer :all]
  											))
 
 (require '[clojure.test :refer :all])
