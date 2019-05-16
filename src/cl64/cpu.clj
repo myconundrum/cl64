@@ -246,10 +246,13 @@
 (defn get-opcode [opcode]  (reduce (fn [rop op] (if (contains? (:ops op) opcode) op rop)) nil opcodes))
 
 (defn fetch 
-  "gets opcode and any data at the pc"
-  [c]
-  (let [c (set-address c (rget c :pc)) opcode (mget c) len (:bytes (get-address-mode-data opcode))]
-    (mget-bytes c len)))
+  "gets opcode and any data at the pc (or at an address alternatively)"
+  ([c]
+    (let [c (set-address c (rget c :pc)) opcode (mget c) len (:bytes (get-address-mode-data opcode))]
+      (mget-bytes c len)))
+  ([c address] 
+    (let [c (set-address c address) opcode (mget c) len (:bytes (get-address-mode-data opcode))]
+      (mget-bytes c len))))
 
 (defn disassemble
   [c]
