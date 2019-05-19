@@ -4,12 +4,13 @@
  											[cl64.computer :refer :all]
  											[cl64.cpu :refer :all]
  											[cl64.c64 :refer :all]
+ 											[cl64.gui :refer :all]
  											))
 
 (require '[clojure.test :refer :all])
 (require '[clojure.string :as str])
 
-(defn make-session [] {:computer (make-c64) :running true})
+(defn make-session [] {:ui (gui-init) :computer (make-c64) :running true})
 
 (defn str-to-num [#^String s]
   (binding [*read-eval* false]
@@ -118,11 +119,17 @@
         (println (get results 0))
         (get results 1)))))
 
+(defn handle-events
+  [session]
+  (let [e (gui-get-event (:ui session))]
+    (when e (println (format "user selected new value for %s: %s." (get e 1) (get-ui-value (:ui session) (get e 1)))))
+    session))
+
 (defn start-interactive
   []
   (loop [session (make-session)]
     (when (:running session)
-      (recur (handle-command session)))))
+      (recur (handle-command (handle-events session))))))
 
 (defn -main
   "I don't do a whole lot ... yet."

@@ -139,8 +139,8 @@
   ; update the pc with the relative offset, add 1 cycle for a successful branch
   ; and add another cycle if it crossed a page boundary.
   ;
-  (page-boundary-check (inc-cycles (rput c :pc a2)) a1 a2)))
-
+  (-> c (rput :pc a2) (inc-cycles) (page-boundary-check a1 a2))))
+  
 
 (defn absolute-indexed-mode-address
  [c op lo hi reg]
@@ -183,7 +183,10 @@
 
 (defn bittest
   [c d]
+
   (assoc (flag-if-has-flag (flag-if-has-flag c :n (mget c d)) :v (mget c d)) :value (bit-and (mget c d) (rget c :a))))
+
+
 
 (def opcodes
   [{:name "LDA" :ops #{0xa9 0xa5 0xb5 0xad 0xbd 0xb9 0xa1 0xb1} :flags [:z :n] :fn (fn [c d] (rput c :a (mget c d)))}
@@ -272,8 +275,12 @@
 (defn exec
   "fetches op and data at pc and emulates instruction"
   [c]
-  (let [data (fetch c) op (get-opcode (get data 0)) c (add-cycles-by-op (set-address-from-mode (radd c :pc (count data)) data) data)]
-    (set-flags ((:fn op) c data) (:flags op))))
+  (let [data (fetch c) op (get-opcode (get data 0))]
+   (-> c (radd :pc (count data)) 
+       (set-address-from-mode data) (add-cycles-by-op data) ((:fn op) data) (set-flags (:flags op)))))
+
+
+    ;(set-flags ((:fn op) c data) (:flags op))))
 
 ;
 ; TODO: The "stop on 0x00" is just a hack while bringing the full system online.

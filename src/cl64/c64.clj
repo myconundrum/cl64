@@ -53,16 +53,17 @@
  [c mmap address val]
  (println (format "Processor port poke detected at address $%04X with poke value of $%02X." address val))
  (if (= address bankswitch-address)
-    (bankswitch-update (mem-unmapped-poke c address (bit-and (mem-peek c processor-port-address) val)))
-    (mem-unmapped-poke c address val)))
+   (-> c (mem-unmapped-poke address (bit-and (mem-peek c processor-port-address) val)) (bankswitch-update))
+   (mem-unmapped-poke c address val)))
 
 (defn set-bankswitch
   [c]
-  (bankswitch-update (mem-unmapped-poke (mem-unmapped-poke (add-memory-map c 
-    {:name "processor port" :from processor-port-address :to processor-port-address-end
-    	:peekfn mem-unmapped-peek :pokefn processor-port-poke :active true :data []}) 
-    processor-port-address processor-port-default-value) 
-    bankswitch-address bankswitch-default-value)))
+  (-> c (add-memory-map {:name "processor port" :from processor-port-address :to processor-port-address-end
+    	                    :peekfn mem-unmapped-peek :pokefn processor-port-poke :active true :data []})
+    (mem-unmapped-poke processor-port-address processor-port-default-value)
+    (mem-unmapped-poke bankswitch-address bankswitch-default-value)
+    (bankswitch-update)))
+
 
 (defn load-c64-roms
   [c]
@@ -76,6 +77,8 @@
 (defn make-c64 []
   (println "Initializing Commodore 64 emulator.")
   (let [c (-> (make-computer) (load-c64-roms) (set-bankswitch))]
-    (rput c :pc (mem-peek-word c reset-address))))
+   (->> (mem-peek-word c reset-address)  (rput c :pc))))
+
+    ;(rput c :pc (mem-peek-word c reset-address))))
 
 
